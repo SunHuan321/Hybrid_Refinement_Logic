@@ -26,6 +26,11 @@ lemma has_vector_derivative_projI:
   apply (auto simp add: bounded_linear_scaleR_left)
   by (auto intro: vec_tendstoI)
 
+lemma has_vderiv_on_projI:
+  assumes "\<forall>i. ((\<lambda>t. p t $ i) has_vderiv_on (\<lambda>t. q t $ i)) D"
+  shows "(p has_vderiv_on q) D"
+  using assms has_vderiv_on_def has_vector_derivative_projI by metis
+
 lemma has_derivative_coords [simp,derivative_intros]:
   "((\<lambda>t. t$i) has_derivative (\<lambda>t. t$i)) (at x)"
   unfolding has_derivative_def by auto
