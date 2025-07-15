@@ -3,23 +3,13 @@ theory Refine_Interrupt
 begin
 
 subsection \<open>fix length ode\<close>
-definition exp_depends_on :: "exp \<Rightarrow> var \<Rightarrow> bool" where
-  "exp_depends_on e x = (\<exists>s1 s2. (\<forall>v. v \<noteq> x \<longrightarrow> s1 v = s2 v) \<and> e s1 \<noteq> e s2)"
 
-definition exp_depends :: "exp \<Rightarrow> var set" where
-  "exp_depends e = {x. exp_depends_on e x}"
-
-lemma exp_independent_on:
-  assumes "\<not> exp_depends_on e x"
-  shows "\<forall>s1 s2. (\<forall>v. v \<noteq> x \<longrightarrow> s1 v = s2 v) \<longrightarrow> e s1 = e s2"
-  using assms exp_depends_on_def by blast
-
-definition exp_depends_set :: "exp \<Rightarrow> var set \<Rightarrow> bool" where
-  "exp_depends_set e V = (\<forall>s1 s2. (\<forall>v \<in> V. s1 v = s2 v) \<longrightarrow> e s1 = e s2)"
+definition exp_independ :: "exp \<Rightarrow> var \<Rightarrow> bool" where
+  "exp_independ e x = (\<forall>s1 s2 v. e s1 = e s2 \<longrightarrow> e s1 = e (s2(x:= v)))"
 
 lemma ODEsol_time:
   assumes "ODEsol (ODE f) p d"
-      and "\<forall>x. x \<noteq> T \<longrightarrow> \<not> exp_depends_on (f x) T"
+      and "\<forall>x. x \<noteq> T \<longrightarrow> exp_independ (f x) T"
   shows "ODEsol (ODE (f(T := (\<lambda>_. 1)))) (\<lambda>t. (p t)(T := t)) d"
 proof-
   let ?p = "\<lambda>x. state2vec (p x)" and ?q = "\<lambda>x. state2vec (\<lambda>a. f a (p x))"
@@ -42,7 +32,8 @@ proof-
       next
         assume "i \<noteq> T"
         then have "\<forall>t. ?p' t $ i = ?p t $ i" and "\<forall>t. ?q' t $ i = ?q t $ i"
-           using \<open>i \<noteq> T\<close> assms(2) exp_independent_on state2vec_def by auto
+           using \<open>i \<noteq> T\<close> assms(2) apply (simp add: state2vec_def) 
+           using \<open>i \<noteq> T\<close> assms(2) exp_independ_def state2vec_def by force
          then show ?thesis
            using b0  by presburger
        qed
@@ -57,7 +48,7 @@ proof-
 lemma bigstep_fixed_length_ode:
   assumes "Period > 0"
       and "ODEsol (ODE f) p Period"
-      and "\<forall>x. x \<noteq> T \<longrightarrow> \<not> exp_depends_on (f x) T"
+      and "\<forall>x. x \<noteq> T \<longrightarrow> exp_independ (f x) T"
       and "tr = [WaitBlk Period (\<lambda>\<tau>. State ((p \<tau>)(T := \<tau>))) ({}, {})]" 
       and "s0 = (p(0))(T := 0)"
       and "s1 = (p(Period))(T := Period)"
@@ -404,6 +395,8 @@ qed
 
 subsection \<open>Refine a Parallel HCSP to sequential one \<close>
 
+text \<open>Definition of refinement\<close>
+
 fun tblk_int :: "(gstate \<times> state) set \<Rightarrow> trace_block \<Rightarrow> trace_block \<Rightarrow> bool" where
   "tblk_int \<alpha> (WaitBlock d1 p1 _) (WaitBlock d2 p2 _) =
      (d1 = d2 \<and> (\<forall>t \<in> {0..d1}. \<exists>s. p2 t = State s \<and> (p1 t, s) \<in> \<alpha>))"
@@ -453,6 +446,7 @@ lemma hybrid_sim_intI:
     shows "(s\<^sub>c, s\<^sub>a) \<in> \<alpha> \<and> (\<exists>s\<^sub>a' tr\<^sub>a. big_step P\<^sub>a s\<^sub>a tr\<^sub>a s\<^sub>a' \<and> tr_int \<alpha> tr\<^sub>c tr\<^sub>a \<and> (s\<^sub>c', s\<^sub>a') \<in> \<alpha>)"
   using assms hybrid_sim_int_def by fastforce
 
+text \<open>Refinement rules\<close>
 theorem sim_int_weaken:
   assumes "\<alpha> \<subseteq> \<beta>"
       and "(P\<^sub>c, s\<^sub>c) \<sqsubseteq>\<^sub>I \<alpha> (P\<^sub>a, s\<^sub>a)"
@@ -545,54 +539,10 @@ proof-
     by (simp add: hybrid_sim_int_def)
 qed
 
-(*
 theorem sim_intout:
   assumes "0 < Period"
       and "ch \<in> chs"
-      and "\<forall>x. x \<noteq> T \<longrightarrow> \<not> exp_depends_on (f x) T"
-      and "\<forall>s\<^sub>p s\<^sub>c t. (ParState (State s\<^sub>p) (State s\<^sub>c), s\<^sub>p(T := t)) \<in> \<alpha>"
-      and "\<forall>s\<^sub>p t. (Parallel (Single (Cm (ch[!]e); P\<^sub>p)) chs (Single (Cm (ch[?]var); P\<^sub>c)), 
-      (ParState (State s\<^sub>p) (State s\<^sub>c))) \<sqsubseteq>\<^sub>I \<alpha> (P, s\<^sub>p(T := t))"
-    shows "(Parallel (Single (Interrupt (ODE f) (\<lambda>s. True) [(ch[!]e, P\<^sub>p)])) chs (Single (Wait (\<lambda>s. Period); Cm (ch[?]var); P\<^sub>c)),
-          ParState (State s\<^sub>p) (State s\<^sub>c)) \<sqsubseteq>\<^sub>I \<alpha> (T ::= (\<lambda>_. 0); Cont (ODE (f(T := (\<lambda>_. 1)))) (\<lambda>s. s T < Period); P, s\<^sub>p)"
-proof-
-  from assms(4) have "(ParState (State s\<^sub>p) (State s\<^sub>c), s\<^sub>p) \<in> \<alpha>"
-    by (metis fun_upd_triv)
-  {
-    fix s' tr
-    assume "par_big_step (Parallel (Single (Interrupt (ODE f) (\<lambda>s. True) [(ch[!]e, P\<^sub>p)])) chs 
-            (Single (Wait (\<lambda>s. Period); Cm (ch[?]var); P\<^sub>c))) (ParState (State s\<^sub>p) (State s\<^sub>c)) tr s'"
-    with assms(1,2) obtain p tr1 where a0: "ODEsol (ODE f) p Period" "p 0 = s\<^sub>p"
-    "par_big_step (Parallel (Single P\<^sub>p) chs (Single P\<^sub>c)) (ParState (State (p Period)) 
-    (State (s\<^sub>c(var := e (p Period))))) tr1 s'"
-    "tr = WaitBlk Period (\<lambda>\<tau>. ParState (State (p \<tau>)) (State s\<^sub>c)) ({ch}, {}) # IOBlock ch (e (p Period)) # tr1"
-      using par_bigstep_intout_in[of Period ch chs "ODE f" e P\<^sub>p var P\<^sub>c s\<^sub>p s\<^sub>c tr s'] by auto
-    with assms(2) have a0': "par_big_step (Parallel (Single (Cm (ch[!]e); P\<^sub>p)) chs (Single (Cm (ch[?]var); P\<^sub>c))) 
-    (ParState (State (p Period)) (State s\<^sub>c)) (IOBlock ch (e (p Period)) # tr1) s'"
-      using par_bigstep_out_in' by auto
-    let ?tr = "[WaitBlk Period (\<lambda>\<tau>. State ((p \<tau>)(T := \<tau>))) ({}, {})]" and ?s\<^sub>p = "(p Period)(T := Period)"
-    from assms(4,5) a0' obtain tr\<^sub>a\<^sub>1 s\<^sub>a' where a1: "big_step P ?s\<^sub>p tr\<^sub>a\<^sub>1 s\<^sub>a'" "(s', s\<^sub>a') \<in> \<alpha>" "tr_int \<alpha> tr1 tr\<^sub>a\<^sub>1"
-      using hybrid_sim_intI[of "Parallel (Single (Cm (ch[!]e); P\<^sub>p)) chs (Single (Cm (ch[?]var); P\<^sub>c))"
-      "ParState (State (p Period)) (State s\<^sub>c)" \<alpha> P ?s\<^sub>p "IOBlock ch (e (p Period)) # tr1" s']
-      unfolding WaitBlk_def tr_int_def by auto
-    from assms(1,3) a0(1,2,3) have a2: "big_step (Cont (ODE (f(T := \<lambda>_. 1))) (\<lambda>s. s T < Period)) (s\<^sub>p(T := 0)) ?tr ?s\<^sub>p"
-      using bigstep_fixed_length_ode[of Period f p T ?tr "s\<^sub>p(T :=0)" ?s\<^sub>p] by auto     
-    with a1(1) have a3: "big_step (T ::= (\<lambda>_. 0); Cont (ODE (f(T := (\<lambda>_. 1)))) (\<lambda>s. s T < Period); P)
-    s\<^sub>p (?tr @ tr\<^sub>a\<^sub>1) s\<^sub>a'"
-      by (metis (no_types, lifting) assignB self_append_conv2 seqB)
-    with a0(4) assms(4) a1(2, 3) have "\<exists>s\<^sub>a' tr\<^sub>a. big_step (T ::= (\<lambda>_. 0); Cont (ODE (f(T := (\<lambda>_. 1)))) (\<lambda>s. s T < Period); P)
-    s\<^sub>p tr\<^sub>a s\<^sub>a' \<and> tr_int \<alpha> tr tr\<^sub>a \<and> (s', s\<^sub>a') \<in> \<alpha>"
-      by (rule_tac x = s\<^sub>a' in exI, rule_tac x = "?tr @ tr\<^sub>a\<^sub>1" in exI, simp add: tr_int_def WaitBlk_def)
-  }
-  with \<open>(ParState (State s\<^sub>p) (State s\<^sub>c), s\<^sub>p) \<in> \<alpha>\<close> show ?thesis
-    using hybrid_sim_int_def by presburger
-qed
-*)
-
-theorem sim_intout:
-  assumes "0 < Period"
-      and "ch \<in> chs"
-      and "\<forall>x. x \<noteq> T \<longrightarrow> \<not> exp_depends_on (f x) T"
+      and "\<forall>x. x \<noteq> T \<longrightarrow> exp_independ (f x) T"
       and "\<forall>s\<^sub>p s\<^sub>c t. (ParState (State s\<^sub>p) (State s\<^sub>c), s\<^sub>p(T := t)) \<in> \<alpha>"
       and "\<forall>s\<^sub>p t. (Parallel (Single (Cm (ch[!]e); P\<^sub>p)) chs (Single (Cm (ch[?]var); P\<^sub>c)), 
       (ParState (State s\<^sub>p) (State s\<^sub>c))) \<sqsubseteq>\<^sub>I \<alpha> (P, s\<^sub>p(T := t))"
@@ -631,45 +581,7 @@ proof-
     using hybrid_sim_int_def by presburger
 qed
 
-(*
-theorem sim_intout':
-  assumes "0 < Period"
-      and "ch \<in> chs"
-      and "\<forall>x. x \<noteq> T \<longrightarrow> \<not> exp_depends_on (f x) T"
-      and "\<forall>s\<^sub>p s\<^sub>c t. (ParState (State s\<^sub>p) (State s\<^sub>c), s\<^sub>p(T := t)) \<in> \<alpha>"
-      and "\<forall>s s'. (s, s') \<in> \<alpha> \<longrightarrow> (Parallel (Single P\<^sub>p) chs (Single P\<^sub>c), s) \<sqsubseteq>\<^sub>I \<alpha> (P, s')"
-    shows "(Parallel (Single (Interrupt (ODE f) (\<lambda>s. True) [(ch[!]e, P\<^sub>p)])) chs (Single (Wait (\<lambda>s. Period); Cm (ch[?]var); P\<^sub>c)),
-          ParState (State s\<^sub>p) (State s\<^sub>c)) \<sqsubseteq>\<^sub>I \<alpha> (T ::= (\<lambda>_. 0); Cont (ODE (f(T := (\<lambda>_. 1)))) (\<lambda>s. s T < Period); P, s\<^sub>p)"
-proof-
-  from assms(4) have "(ParState (State s\<^sub>p) (State s\<^sub>c), s\<^sub>p) \<in> \<alpha>"
-    by (metis fun_upd_triv)
-  {
-    fix s' tr
-    assume "par_big_step (Parallel (Single (Interrupt (ODE f) (\<lambda>s. True) [(ch[!]e, P\<^sub>p)])) chs 
-            (Single (Wait (\<lambda>s. Period); Cm (ch[?]var); P\<^sub>c))) (ParState (State s\<^sub>p) (State s\<^sub>c)) tr s'"
-    with assms(1,2) obtain p tr1 where a0: "ODEsol (ODE f) p Period" "p 0 = s\<^sub>p"
-    "par_big_step (Parallel (Single P\<^sub>p) chs (Single P\<^sub>c)) (ParState (State (p Period)) 
-    (State (s\<^sub>c(var := e (p Period))))) tr1 s'"
-    "tr = WaitBlk Period (\<lambda>\<tau>. ParState (State (p \<tau>)) (State s\<^sub>c)) ({ch}, {}) # IOBlock ch (e (p Period)) # tr1"
-      using par_bigstep_intout_in[of Period ch chs "ODE f" e P\<^sub>p var P\<^sub>c s\<^sub>p s\<^sub>c tr s'] by auto
-    let ?tr = "[WaitBlk Period (\<lambda>\<tau>. State ((p \<tau>)(T := \<tau>))) ({}, {})]" and ?s\<^sub>p = "(p Period)(T := Period)"
-    from assms(4,5) a0(3) obtain tr\<^sub>a\<^sub>1 s\<^sub>a' where a1: "big_step P ?s\<^sub>p tr\<^sub>a\<^sub>1 s\<^sub>a'" "(s', s\<^sub>a') \<in> \<alpha>" "tr_int \<alpha> tr1 tr\<^sub>a\<^sub>1"
-      using hybrid_sim_intI by blast        
-    from assms(1,3) a0(1,2,3) have a2: "big_step (Cont (ODE (f(T := \<lambda>_. 1))) (\<lambda>s. s T < Period)) (s\<^sub>p(T := 0)) ?tr ?s\<^sub>p"
-      using bigstep_fixed_length_ode[of Period f p T ?tr "s\<^sub>p(T :=0)" ?s\<^sub>p] by auto
-    with a1(1) have a3: "big_step (T ::= (\<lambda>_. 0); Cont (ODE (f(T := (\<lambda>_. 1)))) (\<lambda>s. s T < Period); P)
-    s\<^sub>p (?tr @ tr\<^sub>a\<^sub>1) s\<^sub>a'"
-      by (metis (no_types, lifting) assignB self_append_conv2 seqB)
-    with a0(4) assms(4) a1(2, 3) have "\<exists>s\<^sub>a' tr\<^sub>a. big_step (T ::= (\<lambda>_. 0); Cont (ODE (f(T := (\<lambda>_. 1)))) (\<lambda>s. s T < Period); P)
-    s\<^sub>p tr\<^sub>a s\<^sub>a' \<and> tr_int \<alpha> tr tr\<^sub>a \<and> (s', s\<^sub>a') \<in> \<alpha>"
-      by (rule_tac x = s\<^sub>a' in exI, rule_tac x = "?tr @ tr\<^sub>a\<^sub>1" in exI, simp add: tr_int_def WaitBlk_def)
-  }
-  with \<open>(ParState (State s\<^sub>p) (State s\<^sub>c), s\<^sub>p) \<in> \<alpha>\<close> show ?thesis
-    using hybrid_sim_int_def by presburger
-qed
-*)
-
-subsection \<open>Multiple inputs and outputs\<close>
+text \<open>Multiple inputs and outputs\<close>
 
 fun inputs :: "cname \<Rightarrow> var list \<Rightarrow> proc" where
   "inputs ch [] = Skip"
@@ -721,7 +633,7 @@ next
     by (simp add: fun_upd_def update_vars_cons)
 qed
 
-lemma update_vars_equiv:
+lemma update_vars_distinct:
   assumes "distinct (map fst params)"
       and "(x, e) \<in> set params"
   shows "(update_vars s1 s2 params) x = e s2"
@@ -752,18 +664,85 @@ fun assign_vars :: "state \<Rightarrow> (var \<times> exp) list  \<Rightarrow> p
   "assign_vars s [] = Skip"
 | "assign_vars s ((x, e) # xs) = (x ::= (\<lambda>_. e s); assign_vars s xs)"
 
-fun assign_vars' :: "(var \<times> exp) list \<Rightarrow> proc" where
-  "assign_vars' [] = Skip"
-| "assign_vars' ((x, e) # xs) = (x ::= e; assign_vars' xs)"
+fun assign_vars_independ :: "(var \<times> exp) list  \<Rightarrow> proc" where
+  "assign_vars_independ [] = Skip"
+| "assign_vars_independ ((x, e) # xs) = (x ::= e; assign_vars_independ xs)"
 
 lemma assign_vars_cons:
   "assign_vars s (param # params) = (fst param ::= (\<lambda>_. snd param s); assign_vars s params) "
   by (metis assign_vars.simps(2) prod.collapse)
 
-fun assign_vars_func :: "state \<Rightarrow> var list \<Rightarrow> (var \<times> (var list \<Rightarrow> exp)) list \<Rightarrow> proc" where
-  "assign_vars_func s _ [] = Skip"
-| "assign_vars_func s vs ((x, f) # xs) =
-     (x ::= (\<lambda>_. (f vs) s); assign_vars_func s vs xs)"
+definition apply_func :: "(real list \<Rightarrow> real) \<Rightarrow> exp list \<Rightarrow> state \<Rightarrow> real" where
+  "apply_func f es s = f (map (\<lambda>e. e s) es)"
+
+lemma apply_func_equiv:
+  assumes "\<forall>e \<in> set es. e s = e s'"
+  shows "apply_func f es s = apply_func f es s'"
+  by (smt (verit, ccfv_SIG) apply_func_def assms map_eq_conv)
+
+definition vars2exps :: "var list \<Rightarrow> exp list" where
+  "vars2exps vs = map (\<lambda>v. \<lambda>s. s v) vs"
+
+definition eval_vars :: "var list \<Rightarrow> state \<Rightarrow> real list" where
+  "eval_vars vs s = map (\<lambda>v. s v) vs"
+
+definition eval_exps :: "exp list \<Rightarrow> state \<Rightarrow> real list" where
+  "eval_exps es s = map (\<lambda>e. e s) es"
+
+lemma apply_func_on_vars:
+  "apply_func f (vars2exps vs) s = f (eval_vars vs s)"
+  apply (simp add: vars2exps_def apply_func_def eval_vars_def)
+  by (metis comp_apply)
+
+definition construct_params :: "(var \<times> (real list \<Rightarrow> real)) list \<Rightarrow> exp list \<Rightarrow> (var \<times> exp) list" where
+  "construct_params params exps = map (\<lambda>(v, f). (v, apply_func f exps)) params"
+
+lemma construct_params_fst: "map fst (construct_params params exps) = map fst params"
+  apply (simp add: construct_params_def)
+  by auto
+
+lemma construct_params_snd: "map snd (construct_params params exps) = 
+                             map (\<lambda>f. apply_func f exps) (map snd params)"
+  apply (simp add: construct_params_def)
+  by auto
+
+text \<open>send [e1 ... en] to [v1, ..., vn], then receive fi [v1 ... vn]\<close>
+theorem sim_ins_outs_correspond:
+  assumes "vars\<^sub>c = map fst params\<^sub>1" "exps\<^sub>p = map snd params\<^sub>1"
+      and "vars\<^sub>p = map fst params\<^sub>2" "funs\<^sub>c = map snd params\<^sub>2"
+      and "distinct vars\<^sub>c" 
+      and "\<forall>e \<in> set exps\<^sub>p. e s\<^sub>p = e s\<^sub>p'"
+      and "\<forall>e v. e \<in> set exps\<^sub>p \<longrightarrow> v \<in> set vars\<^sub>p \<longrightarrow> exp_independ e v"
+    shows "(assign_vars (update_vars s\<^sub>c s\<^sub>p params\<^sub>1) (construct_params params\<^sub>2 (vars2exps vars\<^sub>c)), s\<^sub>p') \<sqsubseteq> Id 
+           (assign_vars_independ (construct_params params\<^sub>2 exps\<^sub>p), s\<^sub>p')"
+  using assms(3,4,6,7)
+proof(induct params\<^sub>2 arbitrary: vars\<^sub>p vars\<^sub>p funs\<^sub>c s\<^sub>p' s\<^sub>p)
+  case Nil
+  then show ?case 
+    apply (simp add: construct_params_def)
+    using refl_Id sim_refl by blast
+next
+  case (Cons a params\<^sub>2)
+  let ?s\<^sub>c = "update_vars s\<^sub>c s\<^sub>p params\<^sub>1"
+  from assms(1,2,5) have "\<forall>i < length params\<^sub>1. ?s\<^sub>c (vars\<^sub>c ! i) = (exps\<^sub>p ! i) s\<^sub>p"
+    using update_vars_distinct by auto
+  with assms(1,2) have a0: "eval_vars vars\<^sub>c ?s\<^sub>c = eval_exps exps\<^sub>p s\<^sub>p"
+    by (smt (verit, del_insts) eval_exps_def eval_vars_def length_map map_equality_iff)
+  obtain v f where a1: "a = (v, f)"
+    using old.prod.exhaust by blast
+  with a0 have a2: "assign_vars ?s\<^sub>c (construct_params (a # params\<^sub>2) (vars2exps vars\<^sub>c)) = 
+  v ::= (\<lambda>_. f (eval_exps exps\<^sub>p s\<^sub>p)); assign_vars ?s\<^sub>c (construct_params params\<^sub>2 (vars2exps vars\<^sub>c))"
+    by (simp add: construct_params_def apply_func_on_vars)
+  with a1 have a3: "assign_vars_independ (construct_params (a # params\<^sub>2) exps\<^sub>p) = 
+  v ::= apply_func f exps\<^sub>p; assign_vars_independ (construct_params params\<^sub>2 exps\<^sub>p)"
+    by (simp add: construct_params_def)
+  with Cons.prems(3) have a4: "(v ::= (\<lambda>_. f (eval_exps exps\<^sub>p s\<^sub>p)), s\<^sub>p') \<sqsubseteq> Id (v ::= apply_func f exps\<^sub>p, s\<^sub>p')"
+    by (metis (lifting) apply_func_def apply_func_equiv assignB assignE eval_exps_def hybrid_sim_single_Id)
+  with a2 a3 show ?case
+    apply (simp, rule_tac sim_seq_Id, simp_all)
+    by (smt (verit, ccfv_threshold) Cons.hyps Cons.prems(1,3,4) a1 assignE fst_conv
+        list.set_intros(1,2) list.simps(9) reachable_def exp_independ_def)
+qed
 
 lemma sim_comm_outs:
   assumes "ch \<in> chs"
@@ -794,7 +773,6 @@ next
   with Cons.prems show ?case
     by (rule_tac sim_int_cons, simp_all add: big_step_seq_assoc hybrid_sim_single_Id)    
 qed
-
 
 definition gstate_single_rel :: "state \<Rightarrow> (gstate \<times> state) set \<Rightarrow> bool" where
   "gstate_single_rel s\<^sub>c \<alpha>  = (\<forall>V v s\<^sub>p s\<^sub>p'. (ParState (State s\<^sub>p) (State s\<^sub>c), s\<^sub>p') \<in> \<alpha> \<longrightarrow> 
@@ -881,56 +859,14 @@ lemma sim_comm_outs_ins:
   using sim_comm_ins'[of ch\<^sub>c\<^sub>2\<^sub>p chs s\<^sub>p "update_vars s\<^sub>c s\<^sub>p params\<^sub>1" s\<^sub>p' \<alpha> vars\<^sub>p params\<^sub>2 exps\<^sub>c]
   by auto
 
-(*
+text \<open>Refinement rule for single loop body\<close>
 lemma sim_single_control_loop:
   assumes "ch\<^sub>p\<^sub>2\<^sub>c \<in> chs" "ch\<^sub>c\<^sub>2\<^sub>p \<in> chs"
       and "\<alpha> = {(ParState (State s\<^sub>p) (State s\<^sub>c), s\<^sub>p(T := t)) |s\<^sub>p s\<^sub>c t. True}"
       and "vars\<^sub>c = map fst params\<^sub>1" "exps\<^sub>p = map snd params\<^sub>1"
       and "vars\<^sub>p = map fst params\<^sub>2" "exps\<^sub>c = map snd params\<^sub>2"
       and "0 < Period"
-      and "\<forall>x. x \<noteq> T \<longrightarrow> \<not> exp_depends_on (f x) T"
-      and "\<forall>s\<^sub>p s\<^sub>p'. (ParState (State s\<^sub>p) (State s\<^sub>c), s\<^sub>p') \<in> \<alpha> \<longrightarrow> 
-          (assign_vars (update_vars s\<^sub>c s\<^sub>p ((var, e) # params\<^sub>1)) params\<^sub>2, s\<^sub>p') \<sqsubseteq> Id (P, s\<^sub>p')"
-    shows "(Parallel (Single (Interrupt (ODE f) (\<lambda>s. True) [(ch\<^sub>p\<^sub>2\<^sub>c[!]e, outputs ch\<^sub>p\<^sub>2\<^sub>c exps\<^sub>p; inputs ch\<^sub>c\<^sub>2\<^sub>p vars\<^sub>p)])) 
-    chs (Single (Wait (\<lambda>s. Period); Cm (ch\<^sub>p\<^sub>2\<^sub>c[?]var); inputs ch\<^sub>p\<^sub>2\<^sub>c vars\<^sub>c; outputs ch\<^sub>c\<^sub>2\<^sub>p exps\<^sub>c)),
-    ParState (State s\<^sub>p) (State s\<^sub>c)) \<sqsubseteq>\<^sub>I \<alpha> 
-    (T ::= (\<lambda>_. 0); Cont (ODE (f(T := (\<lambda>_. 1)))) (\<lambda>s. s T < Period); P, s\<^sub>p)"
-proof-
-  {
-    fix s\<^sub>p' t 
-    from assms(3) have a0: "\<forall>s\<^sub>c. (ParState (State s\<^sub>p') (State s\<^sub>c), s\<^sub>p'(T := t)) \<in> \<alpha>"
-      by blast
-    from assms(3) have a1: "gstate_single_rel (update_vars s\<^sub>c s\<^sub>p' ((var, e) # params\<^sub>1)) \<alpha>"
-      apply (simp add: gstate_single_rel_def, clarsimp)
-      by (metis fun_upd_twist fun_upd_upd)
-    with a0 assms have "(Parallel (Single (outputs ch\<^sub>p\<^sub>2\<^sub>c (e # exps\<^sub>p); inputs ch\<^sub>c\<^sub>2\<^sub>p vars\<^sub>p)) chs
-    (Single (inputs ch\<^sub>p\<^sub>2\<^sub>c (var # vars\<^sub>c); outputs ch\<^sub>c\<^sub>2\<^sub>p exps\<^sub>c)), ParState (State s\<^sub>p') (State s\<^sub>c)) 
-    \<sqsubseteq>\<^sub>I \<alpha> (assign_vars (update_vars s\<^sub>c s\<^sub>p' ((var, e) # params\<^sub>1)) params\<^sub>2, s\<^sub>p'(T := t))"
-      using sim_comm_outs_ins[of ch\<^sub>p\<^sub>2\<^sub>c chs ch\<^sub>c\<^sub>2\<^sub>p s\<^sub>p' "s\<^sub>p'(T := t)" \<alpha> s\<^sub>c "(var, e) # params\<^sub>1" "var # vars\<^sub>c" 
-      "e # exps\<^sub>p" vars\<^sub>p params\<^sub>2 exps\<^sub>c] by auto
-    then have "(Parallel (Single (Cm (ch\<^sub>p\<^sub>2\<^sub>c[!]e); outputs ch\<^sub>p\<^sub>2\<^sub>c exps\<^sub>p; inputs ch\<^sub>c\<^sub>2\<^sub>p vars\<^sub>p)) chs
-    (Single (Cm (ch\<^sub>p\<^sub>2\<^sub>c[?]var); inputs ch\<^sub>p\<^sub>2\<^sub>c vars\<^sub>c; outputs ch\<^sub>c\<^sub>2\<^sub>p exps\<^sub>c)), ParState (State s\<^sub>p') (State s\<^sub>c)) 
-    \<sqsubseteq>\<^sub>I \<alpha> (assign_vars (update_vars s\<^sub>c s\<^sub>p' ((var, e) # params\<^sub>1)) params\<^sub>2, s\<^sub>p'(T := t))"
-      by (rule_tac sim_int_cons, simp_all add: big_step_seq_assoc hybrid_sim_single_Id)
-    with assms(10) a0 have "(Parallel (Single (Cm (ch\<^sub>p\<^sub>2\<^sub>c[!]e); outputs ch\<^sub>p\<^sub>2\<^sub>c exps\<^sub>p; inputs ch\<^sub>c\<^sub>2\<^sub>p vars\<^sub>p)) chs
-    (Single (Cm (ch\<^sub>p\<^sub>2\<^sub>c[?]var); inputs ch\<^sub>p\<^sub>2\<^sub>c vars\<^sub>c; outputs ch\<^sub>c\<^sub>2\<^sub>p exps\<^sub>c)), ParState (State s\<^sub>p') (State s\<^sub>c)) 
-    \<sqsubseteq>\<^sub>I \<alpha> (P, s\<^sub>p'(T := t))"
-      by (meson hybrid_sim_single_Id sim_int_cons)
-  }
-  with assms show ?thesis
-    using sim_intout[of Period ch\<^sub>p\<^sub>2\<^sub>c chs T f \<alpha> e "outputs ch\<^sub>p\<^sub>2\<^sub>c exps\<^sub>p; inputs ch\<^sub>c\<^sub>2\<^sub>p vars\<^sub>p" var
-    "inputs ch\<^sub>p\<^sub>2\<^sub>c vars\<^sub>c; outputs ch\<^sub>c\<^sub>2\<^sub>p exps\<^sub>c" s\<^sub>c "P" s\<^sub>p]
-    by auto
-qed
-*)
-
-lemma sim_single_control_loop:
-  assumes "ch\<^sub>p\<^sub>2\<^sub>c \<in> chs" "ch\<^sub>c\<^sub>2\<^sub>p \<in> chs"
-      and "\<alpha> = {(ParState (State s\<^sub>p) (State s\<^sub>c), s\<^sub>p(T := t)) |s\<^sub>p s\<^sub>c t. True}"
-      and "vars\<^sub>c = map fst params\<^sub>1" "exps\<^sub>p = map snd params\<^sub>1"
-      and "vars\<^sub>p = map fst params\<^sub>2" "exps\<^sub>c = map snd params\<^sub>2"
-      and "0 < Period"
-      and "\<forall>x. x \<noteq> T \<longrightarrow> \<not> exp_depends_on (f x) T"
+      and "\<forall>x. x \<noteq> T \<longrightarrow> exp_independ (f x) T"
       and "\<forall>s\<^sub>p s\<^sub>p' s\<^sub>c. (ParState (State s\<^sub>p) (State s\<^sub>c), s\<^sub>p') \<in> \<alpha> \<longrightarrow> 
           (assign_vars (update_vars s\<^sub>c s\<^sub>p ((var, e) # params\<^sub>1)) params\<^sub>2, s\<^sub>p') \<sqsubseteq> Id (P, s\<^sub>p')"
     shows "(Parallel (Single (Interrupt (ODE f) (\<lambda>s. True) [(ch\<^sub>p\<^sub>2\<^sub>c[!]e, outputs ch\<^sub>p\<^sub>2\<^sub>c exps\<^sub>p; inputs ch\<^sub>c\<^sub>2\<^sub>p vars\<^sub>p)])) 
@@ -971,7 +907,7 @@ corollary sim_single_control_loop':
       and "vars\<^sub>c = map fst params\<^sub>1" "exps\<^sub>p = map snd params\<^sub>1"
       and "vars\<^sub>p = map fst params\<^sub>2" "exps\<^sub>c = map snd params\<^sub>2"
       and "0 < Period"
-      and "\<forall>x. x \<noteq> T \<longrightarrow> \<not> exp_depends_on (f x) T"
+      and "\<forall>x. x \<noteq> T \<longrightarrow> exp_independ (f x) T"
       and "\<forall>s\<^sub>p s\<^sub>p' s\<^sub>c. (ParState (State s\<^sub>p) (State s\<^sub>c), s\<^sub>p') \<in> \<alpha> \<longrightarrow> 
           (assign_vars (update_vars s\<^sub>c s\<^sub>p ((var, e) # params\<^sub>1)) params\<^sub>2, s\<^sub>p') \<sqsubseteq> Id (P, s\<^sub>p')"
     shows "\<forall>s\<^sub>c s\<^sub>a. (s\<^sub>c, s\<^sub>a) \<in> \<alpha> \<longrightarrow>
@@ -994,23 +930,9 @@ proof-
     by blast
 qed
 
+subsection \<open>loop rules for P1 || P2 \<sqsubseteq> P \<Longrightarrow> Rep P1 || Rep P2 \<sqsubseteq> Rep P\<close>
 
-lemma KKV:
-  assumes "s\<^sub>p X = s\<^sub>p' X"
-  shows "(assign_vars (update_vars s\<^sub>c s\<^sub>p [(M, (\<lambda>s. s X))]) [(Y, (\<lambda>s. s M))], s\<^sub>p') \<sqsubseteq> Id ( Y ::= (\<lambda>s. s X), s\<^sub>p')"
-proof-
-  have a1: "(Y ::= (\<lambda>_. s\<^sub>p' X); Skip, s\<^sub>p') \<sqsubseteq> Id (Y ::= (\<lambda>_. s\<^sub>p' X), s\<^sub>p')"
-    using equiv_Id_single_skipr hybrid_equiv_single_def by force
-  from assms have a2: "(Y ::= (\<lambda>_. s\<^sub>p' X), s\<^sub>p') \<sqsubseteq> Id ( Y ::= (\<lambda>s. s X), s\<^sub>p')"
-    apply (simp add: hybrid_sim_single_Id)
-    using assignB assignE by blast
-  with a1 have "(Y ::= (\<lambda>_. s\<^sub>p' X); Skip, s\<^sub>p') \<sqsubseteq> Id ( Y ::= (\<lambda>s. s X), s\<^sub>p')"
-    by (simp add: hybrid_sim_single_Id)
-  then show ?thesis
-    by (simp add: assms)
-qed
-
-subsection \<open>sync pair and loop rule\<close>
+text \<open>can not execute without other threads help\<close>
 
 definition wait_sync :: "proc \<Rightarrow> cname set \<Rightarrow>  bool" where
   "wait_sync P chs = (\<forall>s s' tr tr' tr''. big_step P s tr s' \<longrightarrow> \<not> combine_blocks chs (tr @ tr') [] tr'')"
@@ -1109,6 +1031,8 @@ proof-
   then show ?thesis
     by (simp add: wait_sync_def)
 qed
+
+text \<open>synchronized program must execute in a lock step manner, execute simultaneously, and then execute remaining\<close>
 
 definition sync_prog :: "proc \<Rightarrow> cname set \<Rightarrow> proc \<Rightarrow> bool" where
   "sync_prog P1 chs P2 = (\<forall>s1 s2 tr1 tr2 s1' s2' tr tr1' tr2'. 
@@ -1257,8 +1181,11 @@ proof-
   qed
 
 
-text \<open>combine_blocks comms tr1 tr2 tr means tr1 and tr2 combines to tr,forbids the situation that wait
-period is incompatible\<close>
+text \<open>Original sync_prog is not seqential compositional, the reason lies in cases when the wait time
+before IO event is incompatible, sync_prog (wait d1; ch[!]v) chs (wait d2; ch[?]var) is true,
+but sync_prog (wait d1; ch[!]v; C1) chs wait (d2; ch[?]var; C2) is not necesarrily true. We stregthen the 
+combine_blocks to forbid this situation\<close>
+
 inductive combine_blocks_compat :: "cname set \<Rightarrow> trace \<Rightarrow> trace \<Rightarrow> trace \<Rightarrow> bool" where
   \<comment> \<open>Empty case\<close>
   combine_blocks_compat_empty:
@@ -1318,6 +1245,8 @@ lemma combine_blocks_compat_append:
    apply (simp add: combine_blocks_compat_unpair2)
   using combine_blocks_compat_wait1 by auto
 
+text \<open>Stronger property that enable sequential composition\<close>
+
 definition sync_prog_compat :: "proc \<Rightarrow> cname set \<Rightarrow> proc \<Rightarrow> bool" where
   "sync_prog_compat P1 chs P2 = (\<forall>s1 s2 tr1 tr2 s1' s2' tr tr1' tr2'. 
   big_step P1 s1 tr1 s1' \<longrightarrow> big_step P2 s2 tr2 s2' \<longrightarrow> 
@@ -1341,6 +1270,7 @@ lemma sync_prog_compat_dense:
   apply (simp add: dense_def sync_prog_compat_def)
   by (metis append_Nil combine_blocks_compat_empty)
 
+text \<open>dense program means pure computational program, which produce no trace\<close>
 lemma dense_skip: "dense Skip"
   using dense_def skipE by blast
 
@@ -1612,15 +1542,14 @@ lemma sync_prog_control:
   using assms
   by (simp add: sync_compat_ins_outs sync_compat_outs_ins sync_prog_implies sync_prog_intout sync_prog_seq)
 
-thm sim_rep_sync
-
+text \<open>Compelete theorem for control loop\<close>
 theorem sim_control_loop:
   assumes "ch\<^sub>p\<^sub>2\<^sub>c \<in> chs" "ch\<^sub>c\<^sub>2\<^sub>p \<in> chs"
       and "\<alpha> = {(ParState (State s\<^sub>p) (State s\<^sub>c), s\<^sub>p(T := t)) |s\<^sub>p s\<^sub>c t. True}"
       and "vars\<^sub>c = map fst params\<^sub>1" "exps\<^sub>p = map snd params\<^sub>1"
       and "vars\<^sub>p = map fst params\<^sub>2" "exps\<^sub>c = map snd params\<^sub>2"
       and "0 < Period"
-      and "\<forall>x. x \<noteq> T \<longrightarrow> \<not> exp_depends_on (f x) T"
+      and "\<forall>x. x \<noteq> T \<longrightarrow> exp_independ (f x) T"
       and "\<forall>s\<^sub>p s\<^sub>p' s\<^sub>c. (ParState (State s\<^sub>p) (State s\<^sub>c), s\<^sub>p') \<in> \<alpha> \<longrightarrow> 
           (assign_vars (update_vars s\<^sub>c s\<^sub>p ((var, e) # params\<^sub>1)) params\<^sub>2, s\<^sub>p') \<sqsubseteq> Id (P, s\<^sub>p')"
     shows "(Parallel (Single (Rep (Interrupt (ODE f) (\<lambda>s. True) [(ch\<^sub>p\<^sub>2\<^sub>c[!]e, outputs ch\<^sub>p\<^sub>2\<^sub>c exps\<^sub>p; inputs ch\<^sub>c\<^sub>2\<^sub>p vars\<^sub>p)]))) 
@@ -1644,5 +1573,79 @@ proof-
     apply (rule_tac sim_rep_sync, simp_all)
     by (metis fun_upd_triv)
 qed
+
+theorem sim_control_loop_correspond:
+  assumes "ch\<^sub>p\<^sub>2\<^sub>c \<in> chs" "ch\<^sub>c\<^sub>2\<^sub>p \<in> chs"
+      and "\<alpha> = {(ParState (State s\<^sub>p) (State s\<^sub>c), s\<^sub>p(T := t)) |s\<^sub>p s\<^sub>c t. True}"
+      and "vars\<^sub>c = map fst params\<^sub>1" "exps\<^sub>p = map snd params\<^sub>1"
+      and "vars\<^sub>p = map fst params\<^sub>2" "funs\<^sub>c = map snd params\<^sub>2"
+      and "exps\<^sub>c = map (\<lambda>f. apply_func f (vars2exps (var # vars\<^sub>c))) funs\<^sub>c"
+      and "distinct (var # vars\<^sub>c)"
+      and "\<forall>e' \<in> set (e # exps\<^sub>p). exp_independ e' T \<and> (\<forall>v \<in> set vars\<^sub>p. exp_independ e' v)"
+      and "0 < Period"
+      and "\<forall>x. x \<noteq> T \<longrightarrow> exp_independ (f x) T"
+    shows "(Parallel (Single (Rep (Interrupt (ODE f) (\<lambda>s. True) [(ch\<^sub>p\<^sub>2\<^sub>c[!]e, outputs ch\<^sub>p\<^sub>2\<^sub>c exps\<^sub>p; inputs ch\<^sub>c\<^sub>2\<^sub>p vars\<^sub>p)]))) 
+    chs (Single (Rep (Wait (\<lambda>s. Period); Cm (ch\<^sub>p\<^sub>2\<^sub>c[?]var); inputs ch\<^sub>p\<^sub>2\<^sub>c vars\<^sub>c; outputs ch\<^sub>c\<^sub>2\<^sub>p exps\<^sub>c))),
+    ParState (State s\<^sub>p) (State s\<^sub>c)) \<sqsubseteq>\<^sub>I \<alpha> 
+    (Rep (T ::= (\<lambda>_. 0); Cont (ODE (f(T := (\<lambda>_. 1)))) (\<lambda>s. s T < Period); 
+     assign_vars_independ (construct_params params\<^sub>2 (e # exps\<^sub>p))), s\<^sub>p)"
+proof-
+  let ?params\<^sub>2 = "construct_params params\<^sub>2 (vars2exps (var # vars\<^sub>c))"
+  from assms(6) have a0: "map fst ?params\<^sub>2 = vars\<^sub>p"
+    by (simp add: construct_params_fst)
+  from assms(7,8) have a1: "map snd ?params\<^sub>2 = exps\<^sub>c"
+    by (simp add: construct_params_snd)
+  {
+    fix s\<^sub>p s\<^sub>p' s\<^sub>c
+    assume "(ParState (State s\<^sub>p) (State s\<^sub>c), s\<^sub>p') \<in> \<alpha>"
+    with assms(3) obtain t where b0: "s\<^sub>p = s\<^sub>p'(T := t)"
+      using prod.inject by fastforce
+    with assms(10) have b1: "\<forall>e'\<in> set (e # exps\<^sub>p). e' s\<^sub>p = e' s\<^sub>p'"
+      using exp_independ_def by fastforce
+    from assms(10) have "\<forall>ea v. ea \<in> set (e # exps\<^sub>p) \<longrightarrow> v \<in> set vars\<^sub>p \<longrightarrow> exp_independ ea v"
+      by blast
+    with b1 assms(4,5,6,7,9,10) have "(assign_vars (update_vars s\<^sub>c s\<^sub>p ((var, e) # params\<^sub>1)) 
+    (construct_params params\<^sub>2 (vars2exps (var # vars\<^sub>c))), s\<^sub>p') \<sqsubseteq> Id 
+    (assign_vars_independ (construct_params params\<^sub>2 (e # exps\<^sub>p)), s\<^sub>p')"
+    using sim_ins_outs_correspond[of "var # vars\<^sub>c" "(var, e) # params\<^sub>1" "e # exps\<^sub>p" vars\<^sub>p params\<^sub>2 funs\<^sub>c
+    s\<^sub>p s\<^sub>p' s\<^sub>c] by auto
+}
+  with assms a0 a1 show ?thesis
+    using sim_control_loop[of ch\<^sub>p\<^sub>2\<^sub>c chs ch\<^sub>c\<^sub>2\<^sub>p \<alpha> T vars\<^sub>c params\<^sub>1 exps\<^sub>p vars\<^sub>p ?params\<^sub>2 exps\<^sub>c Period f var
+    e "assign_vars_independ (construct_params params\<^sub>2 (e # exps\<^sub>p))" s\<^sub>p s\<^sub>c]
+    by auto
+qed
+
+
+theorem sim_ins_outs_correspond:
+  assumes "vars\<^sub>c = map fst params\<^sub>1" "exps\<^sub>p = map snd params\<^sub>1"
+      and "vars\<^sub>p = map fst params\<^sub>2" "funs\<^sub>c = map snd params\<^sub>2"
+      and "distinct vars\<^sub>c" 
+      and "\<forall>e \<in> set exps\<^sub>p. e s\<^sub>p = e s\<^sub>p'"
+      and "\<forall>s1 s2 e var v. e \<in> set exps\<^sub>p \<longrightarrow> var \<in> set vars\<^sub>p \<longrightarrow> e s1 = e s2 \<longrightarrow> e s1 = e (s2(var := v))"
+    shows "(assign_vars (update_vars s\<^sub>c s\<^sub>p params\<^sub>1) (construct_params params\<^sub>2 (vars2exps vars\<^sub>c)), s\<^sub>p') \<sqsubseteq> Id 
+           (assign_vars_independ (construct_params params\<^sub>2 exps\<^sub>p), s\<^sub>p')"
+
+
+
+text \<open>Useful lemma for refine first send variables, then receive ouput based on sended variables\<close>
+
+text \<open>plant sends variable X to variable M of controler, controler send f M back to variable Y of plant\<close>
+
+(*
+lemma output1_inputs1:
+  assumes "s\<^sub>p X = s\<^sub>p' X"
+  shows "(assign_vars (update_vars s\<^sub>c s\<^sub>p [(M, (\<lambda>s. s X))]) [(Y, (\<lambda>s. f (s M)))], s\<^sub>p') \<sqsubseteq> Id ( Y ::= (\<lambda>s. f (s X)), s\<^sub>p')"
+  using assms
+  apply simp
+
+lemma output2_inputs1:
+  assumes "s\<^sub>p X1 = s\<^sub>p' X1" "s\<^sub>p X2 = s\<^sub>p' X2" "M1 \<noteq> M2"
+  shows "(assign_vars (update_vars s\<^sub>c s\<^sub>p [(M1, (\<lambda>s. s X1)), (M2, (\<lambda>s. s X2))]) [(Y, (\<lambda>s. f (s M1) (s M2)))], s\<^sub>p') 
+  \<sqsubseteq> Id ( Y ::= (\<lambda>s. f (s X1) (s X2)), s\<^sub>p')"
+  using assms
+  sorry
+*)
+
 
 end                                                 

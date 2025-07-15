@@ -526,25 +526,6 @@ next
     using combine_blocks_wait2 compat_rdy_symmetric by blast
 qed
 
-(*
-lemma combine_blocks_comm:
-  assumes "combine_blocks chs [OutBlock ch v1] [InBlock ch v2] tr"
-      and "ch \<in> chs"
-    shows "v1 = v2 \<and> tr = [IOBlock ch v1]"
-  using assms
-  apply (induct rule: combine_blocks.cases, auto)
-  using combineE by blast
-
-lemma combine_blocks_comm1:
-  assumes "combine_blocks chs [InBlock ch v1] [OutBlock ch v2] tr"
-      and "ch \<in> chs"
-    shows "v1 = v2 \<and> tr = [IOBlock ch v1]"
-  using assms
-  apply (induct rule: combine_blocks.cases, auto)
-  using combineE by blast
-*)
-
-
 subsection \<open>Lemmas for Loop\<close>
 
 definition big_step_rel :: "proc \<Rightarrow> state \<times> trace \<Rightarrow> state \<times> trace \<Rightarrow> bool"
@@ -807,5 +788,3 @@ lemma wf_tr_par_cons:
   by (simp add: wf_tr_par_def)
 
 end
-
-
