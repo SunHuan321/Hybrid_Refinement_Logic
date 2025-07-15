@@ -130,6 +130,14 @@ fun rdy_of_echoice :: "(comm \<times> proc) list \<Rightarrow> rdy_info" where
     let rdy = rdy_of_echoice rest in
       (fst rdy, insert ch (snd rdy)))"
 
+lemma rdy_of_choice_fst:
+  assumes "map fst cs = map fst cs'"
+  shows "rdy_of_echoice cs = rdy_of_echoice cs'"
+  using assms
+  apply (induct cs arbitrary: cs', simp)
+  by (smt (verit, ccfv_SIG) Cons_eq_map_conv fstI list.distinct(1) list.inject list.simps(9) 
+      rdy_of_echoice.elims rdy_of_echoice.simps(2,3))
+
 text \<open>big_step p s1 tr s2 means executing p starting from state s1 results
 in a trace tr and final state s2.\<close>
 inductive big_step :: "proc \<Rightarrow> state \<Rightarrow> trace \<Rightarrow> state \<Rightarrow> bool" where

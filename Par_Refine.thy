@@ -1,4 +1,4 @@
-theory Refine
+theory Par_Refine
   imports Language
 begin
 
@@ -211,6 +211,11 @@ theorem sim_havoc:
 corollary sim_havoc_Id: "((x ::= e), s) \<sqsubseteq> Id ((x ::= *), s)"
   by (rule sim_havoc, simp_all)
 
+theorem sim_assign_Id: 
+  assumes "e s = v"
+  shows "(x ::= (\<lambda>_. v), s) \<sqsubseteq> Id (x ::= e, s)"
+  by (metis assignB assignE assms hybrid_sim_single_Id)
+
 theorem sim_ichoice_l:
   assumes "(s\<^sub>c, s\<^sub>a) \<in> \<alpha>"
       and "(P\<^sub>c\<^sub>1, s\<^sub>c) \<sqsubseteq> \<alpha> (P\<^sub>a, s\<^sub>a)" "(P\<^sub>c\<^sub>2, s\<^sub>c) \<sqsubseteq> \<alpha> (P\<^sub>a, s\<^sub>a)"
@@ -390,6 +395,97 @@ theorem sim_unloop_Id:
   assumes "\<forall>s'. reachable (Rep P\<^sub>c) s s' \<longrightarrow> (P\<^sub>c, s') \<sqsubseteq> Id (P\<^sub>a, s')"
   shows "(Rep P\<^sub>c, s) \<sqsubseteq> Id (Rep P\<^sub>a, s)"
   by (rule sim_unloop, simp_all add: assms)
+
+thm hybrid_sim_single_Id
+
+theorem sim_interrupt_Id:
+  assumes "map fst cs = map fst cs'" 
+     and "\<forall>i < length cs. (\<forall>s. (snd (cs ! i), s) \<sqsubseteq> Id (snd (cs' ! i), s))"
+   shows "(Interrupt ode b cs, s) \<sqsubseteq> Id (Interrupt ode b cs', s)"
+proof-
+  from assms(1) have a: "length cs = length cs'" 
+    by (metis length_map)
+  from assms(1) have b: "rdy_of_echoice cs = rdy_of_echoice cs'"
+    using rdy_of_choice_fst by blast
+  {
+    fix s' tr
+    assume "big_step (Interrupt ode b cs) s tr s'"
+    then have "big_step (Interrupt ode b cs') s tr s'"
+    proof(cases rule: interruptE, simp)
+      fix i ch e p2 tr2
+      assume a0: "tr = OutBlock ch (e s) # tr2" 
+         and a1: "i < length cs" 
+         and a2:"cs ! i = (ch[!]e, p2)" 
+         and a3:"big_step p2 s tr2 s'"
+      with assms(1) have "fst (cs' ! i) = ch[!]e"
+        by (metis fstI length_map nth_map)
+      then have a4: "(cs' ! i) = (ch[!]e, snd (cs' ! i))"
+        by (simp add: split_pairs2)
+      from assms(2) a1 a2 a3 have "big_step (snd (cs' ! i)) s tr2 s'"
+        using hybrid_sim_single_Id by auto
+      with a0 a1 a4 a show ?thesis
+        by (metis InterruptSendB1 prod.exhaust_sel)
+    next
+      fix d p i ch e p2 tr2
+      assume a0: "tr = WaitBlk d (\<lambda>\<tau>. State (p \<tau>)) (rdy_of_echoice cs) # OutBlock ch (e (p d)) # tr2"
+         and a1: "0 < d" " ODEsol ode p d" "p 0 = s" "\<forall>t. 0 \<le> t \<and> t < d \<longrightarrow> b (p t)" 
+         and a2: "i < length cs"
+         and a3: "cs ! i = (ch[!]e, p2)" 
+         and a4: "big_step p2 (p d) tr2 s'"
+      with assms(1) have "fst (cs' ! i) = ch[!]e"
+        by (metis fstI length_map nth_map)
+      then have a5: "(cs' ! i) = (ch[!]e, snd (cs' ! i))"
+        by (simp add: split_pairs2)
+      from assms(2) a2 a3 a4 have "big_step (snd (cs' ! i)) (p d) tr2 s'"
+        using hybrid_sim_single_Id by auto
+      with a0 a1 a2 a5 a b show ?thesis
+        using InterruptSendB2[of d ode p s b i cs' ch e "snd (cs' ! i)" "rdy_of_echoice cs" tr2 s']
+        by auto
+    next
+      fix i ch var p2 v tr2
+      assume c0: "tr = InBlock ch v # tr2" 
+         and c1: "i < length cs" 
+         and c2: "cs ! i = (ch[?]var, p2)" 
+         and c3: "big_step p2 (s(var := v)) tr2 s'"
+      with assms(1) have "fst (cs' ! i) = ch[?]var"
+        by (metis fstI length_map nth_map)
+      then have c4: "(cs' ! i) = (ch[?]var, snd (cs' ! i))"
+        by (simp add: split_pairs2)
+      from assms(2) c1 c2 c3 have "big_step (snd (cs' ! i)) (s(var := v)) tr2 s'"
+        using hybrid_sim_single_Id by auto
+      with c0 c1 c4 a show ?thesis
+        by (simp add: InterruptReceiveB1)
+    next
+      fix d p i ch var p2 v tr2
+      assume d0: "tr = WaitBlk d (\<lambda>\<tau>. State (p \<tau>)) (rdy_of_echoice cs) # InBlock ch v # tr2"
+         and d1: "0 < d" "ODEsol ode p d" "p 0 = s" " \<forall>t. 0 \<le> t \<and> t < d \<longrightarrow> b (p t)"
+         and d2: "i < length cs" 
+         and d3: "cs ! i = (ch[?]var, p2)" 
+         and d4: "big_step p2 ((p d)(var := v)) tr2 s'"
+      with assms(1) have "fst (cs' ! i) = ch[?]var"
+        by (metis fstI length_map nth_map)
+      then have d5: "(cs' ! i) = (ch[?]var, snd (cs' ! i))"
+        by (simp add: split_pairs2)
+      from assms(2) d2 d3 d4 have "big_step (snd (cs' ! i)) ((p d)(var := v)) tr2 s'"
+        using hybrid_sim_single_Id by auto
+      with d0 d1 d2 d5 a b show ?thesis
+        using InterruptReceiveB2[of d ode p s b i cs' ch var "snd (cs' ! i)" "rdy_of_echoice cs" v tr2 s']
+        by auto
+    next
+      assume "tr = []" "s' = s" "\<not> b s"
+      then show ?thesis
+        by (simp add: InterruptB1)
+    next
+      fix d p
+      assume "tr = [WaitBlk d (\<lambda>\<tau>. State (p \<tau>)) (rdy_of_echoice cs)]" "0 < d" "ODEsol ode p d"
+      "\<forall>t. 0 \<le> t \<and> t < d \<longrightarrow> b (p t)" " \<not> b s'" "p 0 = s" "p d = s'"
+      then show ?thesis
+        by (simp add: InterruptB2 b)
+    qed
+  }
+  then show ?thesis
+    by (simp add: hybrid_sim_single_Id)
+qed
 
 text \<open>ODE with invariant\<close>
 type_synonym tassn = "trace \<Rightarrow> bool"

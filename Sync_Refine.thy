@@ -1,5 +1,5 @@
-theory Refine_Interrupt
-  imports Refine
+theory Sync_Refine
+  imports Par_Refine
 begin
 
 subsection \<open>fix length ode\<close>
@@ -452,7 +452,7 @@ theorem sim_int_weaken:
       and "(P\<^sub>c, s\<^sub>c) \<sqsubseteq>\<^sub>I \<alpha> (P\<^sub>a, s\<^sub>a)"
     shows "(P\<^sub>c, s\<^sub>c) \<sqsubseteq>\<^sub>I \<beta> (P\<^sub>a, s\<^sub>a)"
   using assms
-  by (meson Refine_Interrupt.tr_single_weaken hybrid_sim_int_def subsetD)
+  by (meson tr_single_weaken hybrid_sim_int_def subsetD)
 
 theorem sim_int_cons:
   assumes "(P\<^sub>c\<^sub>1', s\<^sub>c\<^sub>1) \<sqsubseteq> Id (P\<^sub>c\<^sub>1, s\<^sub>c\<^sub>1)"
@@ -1617,20 +1617,7 @@ proof-
 qed
 
 
-theorem sim_ins_outs_correspond:
-  assumes "vars\<^sub>c = map fst params\<^sub>1" "exps\<^sub>p = map snd params\<^sub>1"
-      and "vars\<^sub>p = map fst params\<^sub>2" "funs\<^sub>c = map snd params\<^sub>2"
-      and "distinct vars\<^sub>c" 
-      and "\<forall>e \<in> set exps\<^sub>p. e s\<^sub>p = e s\<^sub>p'"
-      and "\<forall>s1 s2 e var v. e \<in> set exps\<^sub>p \<longrightarrow> var \<in> set vars\<^sub>p \<longrightarrow> e s1 = e s2 \<longrightarrow> e s1 = e (s2(var := v))"
-    shows "(assign_vars (update_vars s\<^sub>c s\<^sub>p params\<^sub>1) (construct_params params\<^sub>2 (vars2exps vars\<^sub>c)), s\<^sub>p') \<sqsubseteq> Id 
-           (assign_vars_independ (construct_params params\<^sub>2 exps\<^sub>p), s\<^sub>p')"
-
-
-
-text \<open>Useful lemma for refine first send variables, then receive ouput based on sended variables\<close>
-
-text \<open>plant sends variable X to variable M of controler, controler send f M back to variable Y of plant\<close>
+text \<open>Some useful lemmas\<close>
 
 (*
 lemma output1_inputs1:
