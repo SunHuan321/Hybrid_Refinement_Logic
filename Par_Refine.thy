@@ -820,4 +820,72 @@ proof-
     using hybrid_sim_par_def by presburger
 qed
 
+lemma loop_inv: 
+  assumes "\<forall>s s'. b s \<longrightarrow> reachable C s s' \<longrightarrow> b s'"
+      and "b s" "reachable (Rep C) s s'"
+    shows "b s'"
+proof-
+  from assms(3) obtain tr n where "iterate_bigstep n (s, []) C (s', tr)"
+    by (metis big_step_while reachable_def)
+  then show ?thesis
+  proof(induct n arbitrary: s' tr)
+    case 0
+    with assms(2) show ?case
+      by simp
+  next
+    case (Suc n)
+    then obtain sm tr1 tr2 where a0: "iterate_bigstep n (s, []) C (sm, tr1)" 
+    "big_step C sm tr2 s'" "tr = tr1 @ tr2"
+      by auto
+    with Suc.hyps[of sm tr1] have "b sm"
+      by auto
+    with a0(2) assms(1) show ?case
+      using reachable_def by blast
+  qed
+qed
+
+lemma loop_inv_control:
+  assumes "\<forall>s s'. b2 s \<longrightarrow> reachable C1 s s' \<longrightarrow> b2 s'"
+      and "\<forall>s s'. b2 s \<longrightarrow> reachable C2 s s' \<longrightarrow> b2 s'"
+      and "\<forall>s s' tr. b2 s \<longrightarrow> big_step (Cont ode b1) s tr s' \<longrightarrow> tr \<noteq> [] \<longrightarrow> ode_inv_assn b2 tr"
+      and "b2 s"
+      and "reachable (Rep (C1; Cont ode b1; C2)) s s'"
+    shows "b2 s'"
+proof-
+  {
+    fix s s'
+    assume a0: "b2 s" 
+       and a1: "reachable (C1; Cont ode b1; C2) s s'"
+    then obtain tr1 s1 tr2 s2 tr3 where a2: "big_step C1 s tr1 s1" "big_step (Cont ode b1) s1 tr2 s2"
+    "big_step C2 s2 tr3 s'"
+      by (meson reachable_def seqE)
+      with assms(1) a0 have "b2 s1"
+        using reachable_def by blast
+      with a2(2) assms(3) have "b2 s2"
+        apply (cases rule: contE, simp)
+         apply blast
+        by (metis atLeastAtMost_iff less_eq_real_def list.distinct(1) ode_inv_imp)
+      with assms(2) a2(3) have "b2 s'"
+        using reachable_def by blast
+    }
+    with assms(4,5) show ?thesis
+      using loop_inv by blast
+  qed
+
+theorem sim_control:
+  assumes "\<forall>s s'. b2 s \<longrightarrow> reachable C1 s s' \<longrightarrow> b2 s'"
+      and "\<forall>s s'. b2 s \<longrightarrow> reachable C2 s s' \<longrightarrow> b2 s'"
+      and "\<forall>s s' tr. b2 s \<longrightarrow> big_step (Cont ode b1) s tr s' \<longrightarrow> tr \<noteq> [] \<longrightarrow> ode_inv_assn b2 tr"
+      and "b2 s"
+    shows "(Rep (C1; (Cont ode b1); C2), s) \<sqsubseteq> Id (Rep (C1; (Cont ode (\<lambda>s. b1 s \<and> b2 s)); C2), s)"
+  apply (rule sim_unloop_Id, clarify)
+  subgoal for s1
+    apply (rule sim_seq_Id, simp add: refl_Id sim_refl, clarify)
+    subgoal for s2
+      apply (rule sim_seq_Id, rule sim_cont_DC, clarify)
+      using assms loop_inv_control apply blast
+      using refl_Id sim_refl by blast
+    done
+  done
+
 end
